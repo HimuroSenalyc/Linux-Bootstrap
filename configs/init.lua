@@ -3,19 +3,17 @@
 -- ==========================================
 -- 强制 Neovim 使用 Wayland 系统的剪贴板工具
 -- 彻底不要用 vim.opt.clipboard = "unnamedplus"，这玩意儿在 Konsole 下会抽风
--- 直接映射键盘，通过系统管道直接调用 wl-copy 和 wl-paste
 
--- 普通模式和可视模式下：
--- 按 y 复制到系统剪贴板
+-- 普通模式和可视模式下：按 y 复制到系统剪贴板
 vim.keymap.set({"n", "v"}, "y", '"+y', { noremap = true })
 -- 按 p 从系统剪贴板粘贴
 vim.keymap.set({"n", "v"}, "p", '"+p', { noremap = true })
 
 -- 暴力拦截：可视模式下按 Ctrl+C，直接调用 shell 命令
 vim.keymap.set("v", "<C-c>", 'y:call system("wl-copy", @")<CR>', { silent = true })
-
 -- 暴力拦截：普通模式下按 Ctrl+V，直接从系统剪贴板粘贴
 vim.keymap.set("n", "<C-v>", ':call system("wl-paste -n")<CR>', { silent = true })
+
 local MiniDeps = require('mini.deps')
 MiniDeps.setup()
 local add = MiniDeps.add
@@ -30,7 +28,7 @@ require('lualine').setup({
 add({ source = 'nvim-treesitter/nvim-treesitter', checkout = 'master' })
 require("nvim-treesitter.install").prefer_git = true
 require('nvim-treesitter.configs').setup({
-  ensure_installed = { "c", "cpp", "lua", "vim", "bash" },
+  ensure_installed = { "c", "cpp", "lua", "vim", "bash", "cmake" },
   highlight = { enable = true },
 })
 
@@ -41,9 +39,7 @@ require('nvim-tree').setup()
 vim.keymap.set('n', '<C-n>', ':NvimTreeToggle<CR>', { silent = true })
 
 -- 4. 极速搜索 (Telescope)
--- 先装 Telescope 的底层依赖
 add('nvim-lua/plenary.nvim')
--- 然后再装 Telescope
 add('nvim-telescope/telescope.nvim')
 local builtin = require('telescope.builtin')
 vim.keymap.set('n', '<C-p>', builtin.find_files, {}) -- 搜索文件
@@ -52,17 +48,24 @@ vim.keymap.set('n', '<C-f>', builtin.live_grep, {})  -- 搜索内容
 -- ==========================================
 -- 基础极客设置
 -- ==========================================
-vim.opt.number = true           -- 绝对行号
-vim.opt.relativenumber = true   -- 相对行号 (邪门指法最爱)
-vim.opt.tabstop = 4             -- Tab 宽度
-vim.opt.shiftwidth = 4          -- 缩进宽度
-vim.opt.expandtab = true        -- Tab 转空格
-vim.opt.termguicolors = true    -- 开启真彩色
-vim.opt.mouse = "a"             -- 允许鼠标操作
+vim.opt.number = true
+vim.opt.relativenumber = true
+vim.opt.tabstop = 4
+vim.opt.shiftwidth = 4
+vim.opt.expandtab = true
+vim.opt.termguicolors = true
+vim.opt.mouse = "a"
 vim.opt.completeopt = { "menuone", "noselect" }
 
 -- ==========================================
--- 原生 LSP 配置 (clangd) & 手动补全
+-- Neovide 专属配置 (如果不用 Neovide 会自动忽略)
+-- ==========================================
+vim.g.neovide_opacity = 0.85 -- 悬浮透明度
+vim.g.neovide_cursor_animation_length = 0.08 -- 光标平滑度
+vim.o.guifont = "JetBrains Mono:h14" -- 如果你有 JetBrains Mono 字体的话
+
+-- ==========================================
+-- 原生 LSP 配置 (clangd & cmake) & 手动补全
 -- ==========================================
 vim.lsp.config('clangd', {
   cmd = { 'clangd' },
@@ -71,34 +74,89 @@ vim.lsp.config('clangd', {
 })
 vim.lsp.enable('clangd')
 
+vim.lsp.config('cmake', {
+  cmd = { 'cmake-language-server' },
+  filetypes = { 'cmake' },
+  root_markers = { 'CMakeLists.txt', '.git' },
+})
+vim.lsp.enable('cmake')
+
+-- ==========================================
+-- 极客版：Ctrl+n 常驻补全模式 & 原生括号联携
+-- ==========================================
+local completion_mode = false
+
+-- LSP 挂载后的键位
 vim.api.nvim_create_autocmd('LspAttach', {
   callback = function(args)
-    local opts = { buffer = args.buf }
-    vim.keymap.set('n', 'gd', vim.lsp.buf.definition, opts) -- gd: 跳转定义
-    vim.keymap.set('n', 'K', vim.lsp.buf.hover, opts)       -- K: 查看文档
-
-    -- 极客手感：按 Ctrl+n 召唤补全（避开输入法的 Ctrl+Space）
-    vim.keymap.set('i', '<C-n>', vim.lsp.buf.completion, opts)
+  local opts = { buffer = args.buf }
+  vim.keymap.set('n', 'gd', vim.lsp.buf.definition, opts)
+  vim.keymap.set('n', 'K', vim.lsp.buf.hover, opts)
   end,
 })
 
--- 万能的 Tab 键：没补全时正常缩进，有补全时直接吃进去
+-- 切换常驻补全模式
+vim.keymap.set('i', '<C-n>', function()
+completion_mode = not completion_mode
+if completion_mode then
+  vim.lsp.buf.completion()
+  else
+    if vim.fn.pumvisible() == 1 then
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<C-e>', true, false, true), 'n', false)
+      end
+      end
+      end, { desc = "切换常驻补全模式" })
+
+-- 自动触发补全
+vim.api.nvim_create_autocmd('TextChangedI', {
+  callback = function()
+  if completion_mode then
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<C-n>', true, false, true), 'n', false)
+    end
+    end,
+})
+
+-- 原生括号联携
+vim.keymap.set('i', '(', '()<Left>', { noremap = true, silent = true })
+vim.keymap.set('i', '[', '[]<Left>', { noremap = true, silent = true })
+vim.keymap.set('i', '{', '{}<Left>', { noremap = true, silent = true })
+vim.keymap.set('i', '"', '""<Left>', { noremap = true, silent = true })
+vim.keymap.set('i', "'", "''<Left>", { noremap = true, silent = true })
+
+-- 优雅跳过右括号
+vim.keymap.set('i', ')', function()
+local line = vim.api.nvim_get_current_line()
+local col = vim.api.nvim_win_get_cursor(0)[2]
+if line:sub(col + 1, col + 1) == ')' then return '<Right>' else return ')' end
+  end, { expr = true, replace_keycodes = false })
+
+vim.keymap.set('i', ']', function()
+local line = vim.api.nvim_get_current_line()
+local col = vim.api.nvim_win_get_cursor(0)[2]
+if line:sub(col + 1, col + 1) == ']' then return '<Right>' else return ']' end
+  end, { expr = true, replace_keycodes = false })
+
+vim.keymap.set('i', '}', function()
+local line = vim.api.nvim_get_current_line()
+local col = vim.api.nvim_win_get_cursor(0)[2]
+if line:sub(col + 1, col + 1) == '}' then return '<Right>' else return '}' end
+  end, { expr = true, replace_keycodes = false })
+
+-- 万能的 Tab 键
 vim.keymap.set('i', '<Tab>', function()
-  if vim.fn.pumvisible() == 0 then 
-    return vim.api.nvim_replace_termcodes('<Tab>', true, false, true) 
+if vim.fn.pumvisible() == 0 then
+  return vim.api.nvim_replace_termcodes('<Tab>', true, false, true)
   end
   return vim.api.nvim_replace_termcodes('<C-n>', true, false, true)
-end, { expr = true })
+  end, { expr = true })
 
 -- ==========================================
 -- 信奥神器：F5 一键编译并运行 C++
 -- ==========================================
 vim.keymap.set('n', '<F5>', function()
-  vim.cmd("w") -- 先保存
-  local filename = vim.fn.expand("%:t") -- 获取当前文件名
-  local outname = vim.fn.expand("%:r") -- 获取不带后缀的文件名
-  -- 在底部开启一个终端，执行 g++ 编译和运行 (开启O2优化并显示所有警告)
-  vim.cmd("belowright 12split | terminal g++ " .. filename .. " -o " .. outname .. " -O2 -Wall && ./" .. outname)
-  -- 自动进入插入模式，方便你输入测试数据
-  vim.cmd("startinsert")
+vim.cmd("w")
+local filename = vim.fn.expand("%:t")
+local outname = vim.fn.expand("%:r")
+vim.cmd("belowright 12split | terminal g++ " .. filename .. " -o " .. outname .. " -O2 -Wall && ./" .. outname)
+vim.cmd("startinsert")
 end, { desc = "编译并运行 C++ 代码" })
